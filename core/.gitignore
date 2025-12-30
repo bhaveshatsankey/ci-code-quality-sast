@@ -1,0 +1,33 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+.ruff_cache
+
+#Migrations
+apps/*/migrations/local/*
+
+# Django stuff
+db.sqlite3  # Ignore SQLite database (if not required)
+*.log
+media/  # User-uploaded media files
+staticfiles/  # Collected static files
+
+
+# Environments and Secrets
+*.env
+.venv
+ignoreme.py
+
+# # Coverage reports
+# htmlcov/
+# .coverage
+# coverage.xml
+# *.cover
+.pytest_cache/
+# .coverage.*
+
+# Temporary Files
+.DS_Store
+
+# Utility Scripts
+migration_sync.py
+migration.py
