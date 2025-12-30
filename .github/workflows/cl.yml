@@ -104,9 +104,9 @@ jobs:
         continue-on-error: true
 
   # ------------------------------------------------------------
-  # Safety - Dependency Vulnerability Scanner
+  # pip-audit - Dependency Vulnerability Scanner
   # ------------------------------------------------------------
-  safety:
+  pip-audit:
     name: Dependency Security Check
     runs-on: ubuntu-latest
     
@@ -119,11 +119,11 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install Safety
-        run: pip install safety
+      - name: Install pip-audit
+        run: pip install pip-audit
 
-      - name: Scan Dependencies for Vulnerabilities
-        run: safety scan --output screen
+      - name: Audit Dependencies
+        run: pip-audit --requirement requirements.txt --desc
         continue-on-error: true
 
   # ------------------------------------------------------------
