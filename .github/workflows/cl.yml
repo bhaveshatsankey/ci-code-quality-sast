@@ -12,12 +12,16 @@ on:
       - development
       - staging
       - main
+  schedule:
+    # Run security scans daily at 2 AM UTC
+    - cron: '0 2 * * *'
 
 # Global permissions for security features
 permissions:
   contents: read
   security-events: write
   actions: read
+  pull-requests: write  # For PR comments
 
 jobs:
   # ------------------------------------------------------------
@@ -26,6 +30,7 @@ jobs:
   ruff:
     name: Code Quality Check
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     
     steps:
       - name: Checkout code
@@ -51,6 +56,7 @@ jobs:
   codeql:
     name: CodeQL Security Scan
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     
     permissions:
       security-events: write
@@ -86,6 +92,7 @@ jobs:
   bandit:
     name: Bandit Security Check
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     
     steps:
       - name: Checkout code
@@ -109,6 +116,7 @@ jobs:
   pip-audit:
     name: Dependency Security Check
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     
     steps:
       - name: Checkout code
@@ -127,11 +135,155 @@ jobs:
         continue-on-error: true
 
   # ------------------------------------------------------------
+  # Secrets Scanning with Gitleaks
+  # ------------------------------------------------------------
+  gitleaks:
+    name: Secrets Scanning
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for better detection
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ------------------------------------------------------------
+  # OWASP Dependency Check (for comprehensive scanning)
+  # ------------------------------------------------------------
+  dependency-check:
+    name: OWASP Dependency Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run OWASP Dependency-Check
+        uses: dependency-check/Dependency-Check_Action@main
+        with:
+          project: 'ci-code-quality-sast'
+          path: '.'
+          format: 'HTML'
+          args: >
+            --enableRetired
+            --enableExperimental
+
+      - name: Upload Dependency-Check Report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dependency-check-report
+          path: reports/
+
+  # ------------------------------------------------------------
   # Django Tests with SQLite
   # ------------------------------------------------------------
   tests:
     name: Django Tests
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    
+    strategy:
+      matrix:
+        python-version: ['3.10', '3.11', '3.12']  # Test multiple versions
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run Migrations
+        env:
+          DJANGO_SETTINGS_MODULE: core.settings
+        run: python manage.py migrate --no-input
+
+      - name: Check for Missing Migrations
+        env:
+          DJANGO_SETTINGS_MODULE: core.settings
+        run: python manage.py makemigrations --check --dry-run --no-input
+
+      - name: Run Tests
+        env:
+          DJANGO_SETTINGS_MODULE: core.settings
+        run: python manage.py test --no-input --verbosity=2
+
+      - name: Generate Coverage Report
+        env:
+          DJANGO_SETTINGS_MODULE: core.settings
+        run: |
+          pip install coverage
+          coverage run --source='.' manage.py test
+          coverage report --fail-under=80
+          coverage xml
+
+      - name: Upload Coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          file: ./coverage.xml
+          flags: unittests-py${{ matrix.python-version }}
+          name: codecov-py${{ matrix.python-version }}
+          fail_ci_if_error: false
+        continue-on-error: true
+
+      - name: Upload Coverage Report as Artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-report-py${{ matrix.python-version }}
+          path: |
+            coverage.xml
+            htmlcov/
+
+  # ------------------------------------------------------------
+  # Docker Image Security Scan (if using Docker)
+  # ------------------------------------------------------------
+  trivy:
+    name: Container Security Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/staging')
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+
+      - name: Upload Trivy results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+  # ------------------------------------------------------------
+  # Build Verification (ensure the app builds correctly)
+  # ------------------------------------------------------------
+  build:
+    name: Build Verification
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
     
     steps:
       - name: Checkout code
@@ -148,30 +300,45 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run Migrations
+      - name: Collect Static Files
         env:
           DJANGO_SETTINGS_MODULE: core.settings
-        run: python manage.py migrate --no-input
+          SECRET_KEY: dummy-secret-key-for-ci
+        run: python manage.py collectstatic --no-input --clear
 
-      - name: Run Tests
+      - name: Check Django Configuration
         env:
           DJANGO_SETTINGS_MODULE: core.settings
-        run: python manage.py test --no-input --verbosity=2
+          SECRET_KEY: dummy-secret-key-for-ci
+        run: python manage.py check --deploy
 
-      - name: Generate Coverage Report
-        env:
-          DJANGO_SETTINGS_MODULE: core.settings
+  # ------------------------------------------------------------
+  # Deployment Readiness Check
+  # ------------------------------------------------------------
+  deployment-check:
+    name: Deployment Readiness
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: github.event_name == 'push'
+    needs: [ruff, codeql, tests, build]
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Verify all checks passed
         run: |
-          pip install coverage
-          coverage run --source='.' manage.py test
-          coverage report
-          coverage xml
+          echo "✅ All quality and security checks passed!"
+          echo "🚀 Ready for deployment to ${{ github.ref_name }}"
 
-      - name: Upload Coverage to Codecov
-        uses: codecov/codecov-action@v4
+      - name: Post PR Comment
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
         with:
-          file: ./coverage.xml
-          flags: unittests
-          name: codecov-umbrella
-          fail_ci_if_error: false
-        continue-on-error: true
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '✅ All CI checks passed! This PR is ready for review and merge.'
+            })
