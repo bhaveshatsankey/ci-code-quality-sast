@@ -114,28 +114,16 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Check for requirements.txt
-        id: check-requirements
-        run: |
-          if [ -f requirements.txt ]; then
-            echo "exists=true" >> $GITHUB_OUTPUT
-          else
-            echo "exists=false" >> $GITHUB_OUTPUT
-          fi
-
       - name: Setup Python
-        if: steps.check-requirements.outputs.exists == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
       - name: Install Safety
-        if: steps.check-requirements.outputs.exists == 'true'
         run: pip install safety
 
-      - name: Check Dependencies
-        if: steps.check-requirements.outputs.exists == 'true'
-        run: safety check -r requirements.txt --output screen
+      - name: Scan Dependencies for Vulnerabilities
+        run: safety scan --output screen
         continue-on-error: true
 
   # ------------------------------------------------------------
