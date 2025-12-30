@@ -13,6 +13,12 @@ on:
       - staging
       - main
 
+# Global permissions for the entire workflow
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
 jobs:
   # ------------------------------------------------------------
   # Ruff - Code Quality (CHECK ONLY, DON'T FIX)
@@ -27,15 +33,12 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          cache: 'pip'  # Cache pip dependencies for faster runs
-          cache-dependency-path: '**/requirements*.txt'
 
       - name: Install Ruff
         run: pip install ruff
 
       - name: Ruff Lint Check
         run: ruff check . --output-format=github
-        # --output-format=github shows inline annotations in PR
 
       - name: Ruff Format Check
         run: ruff format --check .
@@ -58,8 +61,6 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          cache: 'pip'
-          cache-dependency-path: '**/requirements*.txt'
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v3
@@ -74,15 +75,35 @@ jobs:
         uses: github/codeql-action/analyze@v3
         with:
           category: "/language:python"
+          upload: true
 
   # ------------------------------------------------------------
-  # Dependency Security Scanning (Optional but Recommended)
+  # Bandit - Python Security Linter (Backup for CodeQL)
   # ------------------------------------------------------------
-  dependency-check:
+  bandit:
     runs-on: ubuntu-latest
-    permissions:
-      security-events: write
-      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Bandit
+        run: pip install bandit[toml]
+
+      - name: Run Bandit Security Scan
+        run: bandit -r . -ll -f screen
+        continue-on-error: true
+
+  # ------------------------------------------------------------
+  # Safety - Dependency Vulnerability Scanner
+  # ------------------------------------------------------------
+  safety:
+    runs-on: ubuntu-latest
+    if: hashFiles('requirements.txt') != ''
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -96,17 +117,16 @@ jobs:
         run: pip install safety
 
       - name: Check Dependencies
-        run: |
-          if [ -f requirements.txt ]; then
-            safety check -r requirements.txt --output json
-          fi
-        continue-on-error: true  # Don't fail build, just warn
+        run: safety check -r requirements.txt --output screen
+        continue-on-error: true
 
   # ------------------------------------------------------------
-  # Django Tests (If you have tests)
+  # Tests (if you have Django tests)
   # ------------------------------------------------------------
   tests:
     runs-on: ubuntu-latest
+    if: hashFiles('requirements.txt') != ''
+    
     services:
       postgres:
         image: postgres:15
@@ -130,18 +150,19 @@ jobs:
         with:
           python-version: '3.11'
           cache: 'pip'
-          cache-dependency-path: '**/requirements*.txt'
 
       - name: Install Dependencies
-        run: |
-          pip install -r requirements.txt
+        run: pip install -r requirements.txt
+
+      - name: Run Migrations
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_db
+        run: python manage.py migrate --no-input
 
       - name: Run Django Tests
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_db
-          DJANGO_SETTINGS_MODULE: your_project.settings.test
-        run: |
-          python manage.py test --no-input
+        run: python manage.py test --no-input
 
       - name: Generate Coverage Report
         run: |
@@ -150,8 +171,9 @@ jobs:
           coverage report
           coverage xml
 
-      - name: Upload Coverage to Codecov
+      - name: Upload Coverage
         uses: codecov/codecov-action@v4
         with:
           file: ./coverage.xml
           fail_ci_if_error: false
+        continue-on-error: true
