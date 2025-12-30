@@ -13,7 +13,7 @@ on:
       - staging
       - main
 
-# Global permissions for the entire workflow
+# Global permissions for security features
 permissions:
   contents: read
   security-events: write
@@ -21,10 +21,12 @@ permissions:
 
 jobs:
   # ------------------------------------------------------------
-  # Ruff - Code Quality (CHECK ONLY, DON'T FIX)
+  # Ruff - Code Quality (Linting & Formatting)
   # ------------------------------------------------------------
   ruff:
+    name: Code Quality Check
     runs-on: ubuntu-latest
+    
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -47,25 +49,27 @@ jobs:
   # CodeQL - SAST Security Analysis
   # ------------------------------------------------------------
   codeql:
+    name: CodeQL Security Scan
     runs-on: ubuntu-latest
+    
     permissions:
       security-events: write
       actions: read
       contents: read
 
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [python]
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v3
         with:
-          languages: python
+          languages: ${{ matrix.language }}
           queries: security-and-quality
 
       - name: Autobuild
@@ -74,14 +78,15 @@ jobs:
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v3
         with:
-          category: "/language:python"
-          upload: true
+          category: "/language:${{ matrix.language }}"
 
   # ------------------------------------------------------------
-  # Bandit - Python Security Linter (Backup for CodeQL)
+  # Bandit - Python Security Linter
   # ------------------------------------------------------------
   bandit:
+    name: Bandit Security Check
     runs-on: ubuntu-latest
+    
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -102,8 +107,10 @@ jobs:
   # Safety - Dependency Vulnerability Scanner
   # ------------------------------------------------------------
   safety:
+    name: Dependency Security Check
     runs-on: ubuntu-latest
     if: hashFiles('requirements.txt') != ''
+    
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -121,9 +128,10 @@ jobs:
         continue-on-error: true
 
   # ------------------------------------------------------------
-  # Tests (if you have Django tests)
+  # Django Tests with PostgreSQL
   # ------------------------------------------------------------
   tests:
+    name: Django Tests
     runs-on: ubuntu-latest
     if: hashFiles('requirements.txt') != ''
     
@@ -131,6 +139,7 @@ jobs:
       postgres:
         image: postgres:15
         env:
+          POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: test_db
         options: >-
@@ -152,28 +161,37 @@ jobs:
           cache: 'pip'
 
       - name: Install Dependencies
-        run: pip install -r requirements.txt
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
 
       - name: Run Migrations
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_db
+          DJANGO_SETTINGS_MODULE: config.settings
         run: python manage.py migrate --no-input
 
-      - name: Run Django Tests
+      - name: Run Tests
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_db
-        run: python manage.py test --no-input
+          DJANGO_SETTINGS_MODULE: config.settings
+        run: python manage.py test --no-input --verbosity=2
 
       - name: Generate Coverage Report
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_db
+          DJANGO_SETTINGS_MODULE: config.settings
         run: |
           pip install coverage
           coverage run --source='.' manage.py test
           coverage report
           coverage xml
 
-      - name: Upload Coverage
+      - name: Upload Coverage to Codecov
         uses: codecov/codecov-action@v4
         with:
           file: ./coverage.xml
+          flags: unittests
+          name: codecov-umbrella
           fail_ci_if_error: false
         continue-on-error: true
