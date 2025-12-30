@@ -27,17 +27,17 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: 'pip'  # Cache pip dependencies for faster runs
 
       - name: Install Ruff
         run: pip install ruff
 
       - name: Ruff Lint Check
-        run: ruff check .
-        # This FAILS if linting issues found
+        run: ruff check . --output-format=github
+        # --output-format=github shows inline annotations in PR
 
       - name: Ruff Format Check
         run: ruff format --check .
-        # This FAILS if code not formatted
 
   # ------------------------------------------------------------
   # CodeQL - SAST Security Analysis
@@ -53,6 +53,12 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v3
         with:
@@ -66,3 +72,83 @@ jobs:
         uses: github/codeql-action/analyze@v3
         with:
           category: "/language:python"
+
+  # ------------------------------------------------------------
+  # Dependency Security Scanning (Optional but Recommended)
+  # ------------------------------------------------------------
+  dependency-check:
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Safety
+        run: pip install safety
+
+      - name: Check Dependencies
+        run: |
+          if [ -f requirements.txt ]; then
+            safety check -r requirements.txt --output json
+          fi
+        continue-on-error: true  # Don't fail build, just warn
+
+  # ------------------------------------------------------------
+  # Django Tests (If you have tests)
+  # ------------------------------------------------------------
+  tests:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: test_db
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Run Django Tests
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_db
+          DJANGO_SETTINGS_MODULE: your_project.settings.test
+        run: |
+          python manage.py test --no-input
+
+      - name: Generate Coverage Report
+        run: |
+          pip install coverage
+          coverage run --source='.' manage.py test
+          coverage report
+          coverage xml
+
+      - name: Upload Coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          file: ./coverage.xml
+          fail_ci_if_error: false
