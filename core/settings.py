@@ -71,7 +71,6 @@ TEMPLATES = [
 WSGI_APPLICATION = "core.wsgi.application"
 
 # Static files (CSS, JavaScript, Images)
-STATIC_URL = "/static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"  # For production
 STATICFILES_DIRS = [
     BASE_DIR / "static",  # Your static files during development
