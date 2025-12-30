@@ -109,7 +109,7 @@ jobs:
   safety:
     name: Dependency Security Check
     runs-on: ubuntu-latest
-    if: hashFiles('requirements.txt') != ''
+    if: ${{ hashFiles('requirements.txt') != '' }}
     
     steps:
       - name: Checkout code
@@ -133,7 +133,7 @@ jobs:
   tests:
     name: Django Tests
     runs-on: ubuntu-latest
-    if: hashFiles('requirements.txt') != ''
+    if: ${{ hashFiles('requirements.txt') != '' }}
     
     services:
       postgres:
